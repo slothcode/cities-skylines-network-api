@@ -65,11 +65,12 @@ namespace NetworkAPI
             {
                 ctx = GetObject(obj.Dependency);
             }
-            if (ctx != null)
+            if (!object.ReferenceEquals(ctx, null))
             {
-                contextType = ctx as Type;
-                if (contextType != null)
+                Type ctxAsType = ctx as Type;
+                if (!object.ReferenceEquals(ctxAsType, null))
                 {
+                    contextType = ctxAsType;
                     ctx = null;
                 }
                 else
@@ -91,7 +92,7 @@ namespace NetworkAPI
             if (obj.Type == ObjectType.CLASS)
             {
                 Type t = GetAssemblyType(obj.Assembly, obj.Name);
-                if (t == null)
+                if (object.ReferenceEquals(t, null))
                 {
                     throw new Exception("Couldn't get: " + obj.Name + " from assembly: " + obj.Assembly);
                 }
@@ -112,12 +113,14 @@ namespace NetworkAPI
             // set the value of the object if it exists
             if (obj.Value != null)
             {
-                // need to figure out here how to decide what to do
-                Type t = Type.GetType(obj.ValueType);
-                if (t == null)
+                Type t = ResolveParameterType(obj);
+                if (object.ReferenceEquals(t, null))
                 {
-                    t = GetAssemblyType(obj.Assembly, obj.ValueType);
-                    retObj = Enum.Parse(t, obj.Value);  // won't always just be an enum...
+                    throw new Exception("Error: unknown ValueType " + obj.ValueType);
+                }
+                if (t.IsEnum)
+                {
+                    retObj = Enum.Parse(t, obj.Value.ToString());
                 }
                 else
                 {
@@ -128,11 +131,38 @@ namespace NetworkAPI
             return retObj;
         }
 
+        private Type ResolveParameterType(NetworkObject obj)
+        {
+            Type t = Type.GetType(obj.ValueType);
+            if (!object.ReferenceEquals(t, null))
+            {
+                return t;
+            }
+            if (!string.IsNullOrEmpty(obj.Assembly))
+            {
+                t = GetAssemblyType(obj.Assembly, obj.ValueType);
+                if (!object.ReferenceEquals(t, null))
+                {
+                    return t;
+                }
+            }
+            string[] primitiveAssemblies = new string[] { "mscorlib", "System" };
+            for (int i = 0; i < primitiveAssemblies.Length; i++)
+            {
+                t = GetAssemblyType(primitiveAssemblies[i], obj.ValueType);
+                if (!object.ReferenceEquals(t, null))
+                {
+                    return t;
+                }
+            }
+            return null;
+        }
+
         public object GetObjectMember(Type contextType, object ctx, NetworkObject obj)
         {
             object retObj = null;
             // make sure we have context!
-            if (contextType != null)
+            if (!object.ReferenceEquals(contextType, null))
             {
                 // get parameters (if they exist)
                 List<object> parameters = new List<object>();
@@ -141,53 +171,87 @@ namespace NetworkAPI
                     for (int i = 0; i < obj.Parameters.Count; i++)
                     {
                         object param = GetObject(obj.Parameters.ElementAt(i));
-                        DebugOutputPanel.AddMessage(PluginManager.MessageType.Message,
-                            "Got parameter: " + param.ToString());
+                        Debug.Log("NetworkAPI: Got parameter: " + param.ToString());
                         parameters.Add(param);
                     }
                 }
                 // now actually get the member
-                MemberInfo[] mia = contextType.GetMember(obj.Name);
+                BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                if (obj.IsStatic)
+                {
+                    flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+                }
+                MemberInfo[] mia = contextType.GetMember(obj.Name, flags);
                 foreach (var mi in mia)
                 {
                     if (mi.MemberType == MemberTypes.Method)
                     {
-                        MethodInfo methodInfo = (MethodInfo)mi;
-                        if (methodInfo != null)
+                        MethodInfo methodInfo = SelectMethod(contextType, obj.Name, parameters.Count);
+                        if (object.ReferenceEquals(methodInfo, null))
                         {
-                            if (methodInfo.IsGenericMethod)
-                            {
-                                methodInfo = ((MethodInfo)mi).MakeGenericMethod(contextType);
-                            }
-                            retObj = methodInfo.Invoke(ctx, parameters.ToArray());
+                            methodInfo = (MethodInfo)mi;
                         }
+                        if (methodInfo.IsGenericMethod)
+                        {
+                            methodInfo = methodInfo.MakeGenericMethod(contextType);
+                        }
+                        if (parameters.Count > 0
+                            && (obj.Name == "GetValue" || obj.Name == "get_Item"))
+                        {
+                            parameters[0] = Convert.ToInt32(parameters[0]);
+                        }
+                        retObj = methodInfo.Invoke(ctx, parameters.ToArray());
                         break;
                     }
                     else if (mi.MemberType == MemberTypes.Property)
                     {
                         PropertyInfo pi = (PropertyInfo)mi;
-                        if (pi != null)
+                        MethodInfo accessor = pi.GetGetMethod(true);
+                        if (!object.ReferenceEquals(accessor, null))
                         {
-                            MethodInfo methodInfo = pi.GetAccessors()[0];
-                            if (methodInfo != null)
-                            {
-                                retObj = methodInfo.Invoke(ctx, null);
-                            }
+                            retObj = accessor.Invoke(ctx, null);
                         }
                         break;
                     }
                     else if (mi.MemberType == MemberTypes.Field)
                     {
                         FieldInfo fi = (FieldInfo)mi;
-                        if (fi != null)
-                        {
-                            retObj = fi.GetValue(ctx);
-                        }
+                        retObj = fi.GetValue(ctx);
                         break;
                     }
                 }
             }
             return retObj;
+        }
+
+        private MethodInfo SelectMethod(Type contextType, string name, int parameterCount)
+        {
+            MethodInfo[] methods = contextType.GetMethods(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            for (int i = 0; i < methods.Length; i++)
+            {
+                MethodInfo candidate = methods[i];
+                if (candidate.Name != name)
+                {
+                    continue;
+                }
+                ParameterInfo[] parms = candidate.GetParameters();
+                if (parms.Length != parameterCount)
+                {
+                    continue;
+                }
+                if (parameterCount == 1
+                    && (name == "GetValue" || name == "get_Item")
+                    && object.ReferenceEquals(parms[0].ParameterType, typeof(int)))
+                {
+                    return candidate;
+                }
+                if (parameterCount == 0)
+                {
+                    return candidate;
+                }
+            }
+            return null;
         }
 
         public Type GetAssemblyType(string assemblyName, string typeName)
