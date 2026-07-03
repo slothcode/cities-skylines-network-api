@@ -47,8 +47,7 @@ namespace NetworkAPI
 
                 string command = Encoding.ASCII.GetString(data, 0, data.Length);
 
-                DebugOutputPanel.AddMessage(PluginManager.MessageType.Message,
-                    "Got connection from: " + sender.ToString());
+                Debug.Log("NetworkAPI: Got connection from: " + sender.ToString());
 
                 string response = "";
                 try
@@ -57,9 +56,7 @@ namespace NetworkAPI
                 }
                 catch (Exception e)
                 {
-                    DebugOutputPanel.AddMessage(PluginManager.MessageType.Error,
-                        e.Message);
-                    Debug.Log(e.Message);
+                    Debug.LogError("NetworkAPI: " + e.Message);
                     response = JsonConvert.SerializeObject(e.Message);
                 }
                 
@@ -79,13 +76,11 @@ namespace NetworkAPI
                 listener.Client.ReceiveTimeout = 50;
                 listenerThread = new Thread(new ThreadStart(this.ListenerThreadFunc));
                 listenerThread.Start();
-                DebugOutputPanel.AddMessage(PluginManager.MessageType.Message, "Server up");
+                Debug.Log("NetworkAPI: Server up");
             }
             catch (Exception e)
             {
-                DebugOutputPanel.AddMessage(PluginManager.MessageType.Error,
-                    "Error: " + e.Message);
-                Console.WriteLine("Error: " + e.Message);
+                Debug.LogError("NetworkAPI: Error: " + e.Message);
             }
             base.OnCreated(threading);
         }
